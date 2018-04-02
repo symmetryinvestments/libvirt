@@ -1,4 +1,4 @@
-import libvirt.binding;
+import libvirt.libvirt;
 import core.stdc.config;
 
 extern(C)
