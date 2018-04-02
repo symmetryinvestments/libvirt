@@ -37,6 +37,7 @@ int main(string[] args)
 {
     import std.conv:to;
     import std.stdio:writeln,writefln;
+    import std.string:join;
 
     virConnectPtr conn1;
     virConnectPtr conn2;
@@ -189,6 +190,7 @@ int main(string[] args)
     free(node_cells_freemem);
 
 
+
     type = cast(char*) virConnectGetType(conn2);
     if (type is null) {
         err2 = virSaveLastError();
@@ -213,6 +215,7 @@ int main(string[] args)
         virFreeError(err2);
     }
     fprintf(stdout, "Libvirt version from connection 4: %lu\n", libvirtVersion);
+    writefln("\n Interface names for connection 4: %s", getDefinedInterfaces(conn4).join(","));
 
 
     uri = virConnectGetURI(conn1);
@@ -255,4 +258,42 @@ int main(string[] args)
     virConnectClose(conn2);
     virConnectClose(conn1);
     return 0;
+}
+
+string[] getUpInterfaces(ref virConnectPtr conn)
+{
+    import std.algorithm;
+    import std.string;
+    import std.conv:to;
+    import std.array:array;
+    char*[] ifaceNames;
+    string[] ret;
+    ifaceNames.length = virConnectNumOfInterfaces(conn);
+    if(ifaceNames.length>0)
+    {
+        auto result = virConnectListInterfaces(conn, ifaceNames.ptr, ifaceNames.length.to!int);
+        ifaceNames.length = (result < 0) ? 0 :result;
+        ret = ifaceNames.map!(ifaceName=>ifaceName.fromStringz.idup).array;
+        ifaceNames.each!(ifaceName => free(ifaceName));
+    }
+    return ret;
+}
+
+string[] getDefinedInterfaces(ref virConnectPtr conn)
+{
+    import std.algorithm;
+    import std.string;
+    import std.conv:to;
+    import std.array:array;
+    char*[] ifaceNames;
+    string[] ret;
+    ifaceNames.length = virConnectNumOfDefinedInterfaces(conn);
+    if(ifaceNames.length>0)
+    {
+        auto result = virConnectListDefinedInterfaces(conn, &ifaceNames[0], ifaceNames.length.to!int);
+        ifaceNames.length = (result < 0) ? 0 :result;
+        ret = ifaceNames.map!(ifaceName=>ifaceName.fromStringz.idup).array;
+        ifaceNames.each!(ifaceName => free(ifaceName));
+    }
+    return ret;
 }
