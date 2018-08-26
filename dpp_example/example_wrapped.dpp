@@ -1,0 +1,878 @@
+#include <stdio.h>
+#include <malloc.h>
+#include <memory.h>
+#include <libvirt/libvirt.h>
+#include <libvirt/virterror.h>
+
+#include <libvirt/libvirt-lxc.h>
+#include <libvirt/libvirt-qemu.h>
+#include <libvirt/libvirt-admin.h>
+#include <libvirt/libvirt-domain.h>
+#include <libvirt/libvirt-domain-snapshot.h>
+#include <libvirt/libvirt-event.h>
+#include <libvirt/libvirt-host.h>
+#include <libvirt/libvirt-interface.h>
+#include <libvirt/libvirt-network.h>
+#include <libvirt/libvirt-nwfilter.h>
+#include <libvirt/libvirt-secret.h>
+#include <libvirt/libvirt-storage.h>
+#include <libvirt/libvirt-stream.h>
+
+import core.stdc.config;
+import std.stdio:writeln,writefln;
+static import std.stdio;
+alias erro = std.stdio.stderr;
+import std.exception:enforce;
+import std.string:fromStringz,strip;
+import std.format:format;
+
+extern(C)
+{
+
+    void customConnErrorFunc(void *userdata, virErrorPtr err)
+    {
+        erro.writefln("Connection handler, failure of libvirt library call:");
+        erro.writefln(" Code: %s", err.code);
+        erro.writefln(" Domain: %s", err.domain);
+        erro.writefln(" Message: %s", err.message);
+        erro.writefln(" Level: %s", err.level);
+        erro.writefln(" str1: %s", err.str1);
+        erro.writefln(" str2: %s", err.str2);
+        erro.writefln(" str3: %s", err.str3);
+        erro.writefln(" int1: %s", err.int1);
+        erro.writefln(" int2: %s", err.int2);
+    }
+
+    void customGlobalErrorFunc(void *userdata, virErrorPtr err)
+    {
+        erro.writefln("Global handler, failure of libvirt library call:");
+        erro.writefln(" Code: %s", err.code);
+        erro.writefln(" Domain: %s", err.domain);
+        erro.writefln(" Message: %s", err.message);
+        erro.writefln(" Level: %s", err.level);
+        erro.writefln(" str1: %s", err.str1);
+        erro.writefln(" str2: %s", err.str2);
+        erro.writefln(" str3: %s", err.str3);
+        erro.writefln(" int1: %s", err.int1);
+        erro.writefln(" int2: %s", err.int2);
+    }
+}
+
+string fromCString(char* p)
+{
+	import std.string:fromStringz;
+	if (p is null)
+		return null;
+	auto ret = p.fromStringz().idup;
+	free(p);
+	return ret;
+}
+
+int main(string[] args)
+{
+    import std.conv:to;
+    import std.stdio:writeln,writefln;
+    import std.string:join;
+
+    virError err;
+    virErrorPtr err2;
+    ulong node_free_memory;
+    virNodeInfo nodeinfo;
+    int numnodes;
+    ulong virtVersion;
+    ulong libvirtVersion;
+    virSecurityModel secmodel;
+
+
+    virSetErrorFunc(null, &customGlobalErrorFunc);
+
+
+    auto conn1 = virConnectOpen("qemu:///system");
+    enforce(conn1 !is null,"Failed to open connection to qemu:///system");
+    scope(exit)
+	virConnectClose(conn1);
+
+    auto conn2 = virConnectOpenReadOnly("qemu:///system");
+    enforce(conn2 !is null, "Failed to open connection to qemu:///system");
+    
+    scope(exit)
+	virConnectClose(conn2);
+
+
+    auto conn3 = virConnectOpenAuth("qemu:///system", virConnectAuthPtrDefault, 0);
+    enforce(conn3 !is null, "Failed to open connection to qemu:///system");
+
+    scope(exit)
+        virConnectClose(conn3);
+
+    auto conn4 = virConnectOpenAuth("qemu:///system", virConnectAuthPtrDefault, VIR_CONNECT_RO);
+    enforce(conn4 !is null, "Failed to open connection to qemu:///system");
+    scope(exit)
+        virConnectClose(conn4);
+
+    virConnSetErrorFunc(conn1, null, &customConnErrorFunc);
+    
+    if (virConnectGetVersion(conn1, null) < 0)
+        erro.writefln("virConnectGetVersion failed");
+
+    if (virConnectGetVersion(conn2, null) < 0)
+        erro.writefln("virConnectGetVersion failed");
+
+
+    virConnSetErrorFunc(conn1, null, null);
+    virSetErrorFunc(null, null);
+
+
+    auto caps = virConnectGetCapabilities(conn1).fromCString;
+    if (caps is null) {
+        virCopyLastError(&err);
+        erro.writefln("virConnectGetCapabilities failed: %s", err.message);
+        virResetError(&err);
+    }
+    writefln("Capabilities of connection 1:\n%s", caps);
+
+
+    auto hostname = virConnectGetHostname(conn2).fromCString;
+    if (hostname is null) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectGetVersion failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Connection 2 hostname: %s", hostname);
+
+
+    int vcpus = virConnectGetMaxVcpus(conn3, null);
+    if (vcpus < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectGetMaxVcpus failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Maximum number of cpus supported on connection 3: %s", vcpus);
+
+
+    node_free_memory = virNodeGetFreeMemory(conn4);
+    if (node_free_memory == 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virNodeGetFreeMemory failed: %s", err2.message);
+        virFreeError(err2);
+    }
+
+
+    if (virNodeGetInfo(conn1, &nodeinfo) < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virNodeGetInfo failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Node information from connection 1:");
+    writefln(" Model: %s", nodeinfo.model.ptr.fromStringz);
+    writefln(" Memory size: %skb", nodeinfo.memory);
+    writefln(" Number of CPUs: %s", nodeinfo.cpus);
+    writefln(" MHz of CPUs: %s", nodeinfo.mhz);
+    writefln(" Number of NUMA nodes: %s", nodeinfo.nodes);
+    writefln(" Number of CPU sockets: %s", nodeinfo.sockets);
+    writefln(" Number of CPU cores per socket: %s", nodeinfo.cores);
+    writefln(" Number of CPU threads per core: %s", nodeinfo.threads);
+
+
+    ulong[] nodeCells;
+    nodeCells.length = nodeinfo.nodes;
+    numnodes = virNodeGetCellsFreeMemory(conn1, nodeCells.ptr, 0, nodeinfo.nodes);
+    if (numnodes < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virNodeGetCellsFreeMemory failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Node Cells Free Memory from connection 1:");
+    foreach(i,node;nodeCells)
+	writefln(" Cell %d: %skb free memory", i, node);
+
+    auto type = (cast(char*) virConnectGetType(conn2)).fromStringz;
+    if (type is null) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectGetType failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Virtualization type from connection 2: %s", type);
+
+
+    if (virConnectGetVersion(conn3, &virtVersion) < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectGetVersion failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Virtualization version from connection 3: %s", virtVersion);
+
+
+    if (virConnectGetLibVersion(conn4, &libvirtVersion) < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectGetLibVersion failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Libvirt version from connection 4: %s", libvirtVersion);
+    writefln("\n Interface names for connection 4: %s", getDefinedInterfaces(conn4).join(","));
+
+
+    auto uri = virConnectGetURI(conn1).fromCString;
+    if (uri is null) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectGetURI failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Canonical URI from connection 1: %s", uri);
+
+
+    auto isEncrypted = virConnectIsEncrypted(conn2);
+    if (isEncrypted < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectIsEncrypted failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Connection 2 %s encrypted", (isEncrypted == 0) ? "is not" : "is");
+
+
+    auto isSecure = virConnectIsSecure(conn3);
+    if (isSecure < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virConnectIsSecure failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Connection 3 %s secure", (isSecure == 0) ? "is not" : "is");
+
+
+    if (virNodeGetSecurityModel(conn4, &secmodel) < 0) {
+        err2 = virSaveLastError();
+        erro.writefln("virNodeGetSecurityModel failed: %s", err2.message);
+        virFreeError(err2);
+    }
+    writefln("Connection 4 Security Model = %s, DOI = %s", secmodel.model, secmodel.doi);
+    writefln("\nActive networks:\n");
+  
+   foreach(ref network;conn1.getActiveNetworks())
+    {
+	if(network.strip.length>0)
+	{
+		auto vn = VirtNetwork(conn1,network);
+		writefln("\t%s: %s",network,vn.toString);
+	}
+	else
+	{
+		writefln("\t%s: blank",network);
+	}
+   }
+   writefln("\nDefined networks:\n");
+   foreach(ref network;conn1.getDefinedNetworks())
+    {
+	if(network.strip.length>0)
+	{
+		auto vn = VirtNetwork(conn1,network);
+		writefln("\t%s: %s",network,vn.toString);
+	}
+	else
+	{
+		writefln("\t%s: blank",network);
+	}
+   }
+    return 0;
+}
+
+const(char)* makeCString(scope const char[] arg)
+{
+	auto s = arg.dup;
+	if(s.length==0 || s[$-1]=='\0')
+		s=s ~'\0';
+	return cast(const(char)*)s.ptr;
+}
+
+struct VirtConnection
+{
+	virConnectPtr handle;
+	alias handle this;
+
+	this(ref virConnectPtr handle)
+	{
+		this.handle = handle;
+		auto result = virConnectRef(handle);
+		enforce(result==0,"unable to increase reference count when creating VirtConnection");
+	}
+
+	~this()
+	{
+		if (this.handle !is null)
+		{
+			auto result = virConnectClose(this.handle);
+			enforce(result ==0, "unable to decrease reference count when closing virConnect");
+			handle = null;
+		}
+	}
+
+	this(this)
+	{
+		auto result = virConnectRef(handle);
+		enforce(result==0,"unable to increase reference count in postblit for VirtConnection");
+	}
+
+	string baselineCPU(char[][] xmlCPUs, virConnectBaselineCPUFlags flags)
+	{
+		import std.algorithm:map;
+		import std.array:array;
+		import std.conv:to;
+		auto cpus = xmlCPUs.map!(s=>s.makeCString).array;
+		auto result = virConnectBaselineCPU(this.handle,cpus.ptr,xmlCPUs.length.to!int,flags);
+		enforce(result !is null, "unable to find baseline CPU");
+		return result.fromStringz.idup;
+	}
+	long getVersion()
+	{
+		ulong ret;
+		enforce(this.handle !is null,"trying to get version on null VirtConnection");
+		auto result = virConnectGetVersion(this.handle,&ret);
+		enforce(result==0,"unable to get version");
+		return ret;
+	}
+	bool isAlive()
+	{
+		enforce(this.handle !is null,"trying to get isAlive on null VirtConnection");
+		auto result = virConnectIsAlive(this.handle);
+		enforce(result!=-1,"error checking isAlive on VirtConnection");
+		return (result==1);
+	}
+	bool isEncrypted()
+	{
+		enforce(this.handle !is null,"trying to get isEncrypted on null VirtConnection");
+		auto result = virConnectIsEncrypted(this.handle);
+		enforce(result!=-1,"error checking isEncrypted on VirtConnection");
+		return (result==1);
+	}
+	bool isSecure()
+	{
+		enforce(this.handle !is null,"trying to get isSecure on null VirtConnection");
+		auto result = virConnectIsSecure(this.handle);
+		enforce(result!=-1,"error checking isSecure on VirtConnection");
+		return (result==1);
+	}
+	
+	ulong nodeGetFreeMemory()
+	{
+		enforce(this.handle !is null,"trying nodeGetFreeMemory on null VirtConnection");
+		auto result = virNodeGetFreeMemory(this.handle);
+		enforce(result!=-0,"error checking nodeGetFreeMemory on VirtConnection");
+		return result;
+	}
+/+
+	// fix me - need to allocate node info	
+	VirtNode nodeGetInfo()
+	{
+		enforce(this.handle !is null,"trying nodeGetFreeMemory on null VirtConnection");
+		virNodeInfoPtr info;
+		auto result = virNodeGetInfo(this.handle,info);
+		enforce(result==-0,"error checking nodeGetFreeMemory on VirtConnection");
+		return VirtNode(info);
+	}
++/
+	string domainFromXMLNative(string nativeFormat, string nativeConfig, uint flags)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to run fromXMLNative on null connection");
+		auto result = virConnectDomainXMLFromNative(this.handle,nativeFormat.toStringz, nativeConfig.toStringz,flags);
+		enforce(result !is null,"unable to run domainFromXMLNative");
+		return result.fromCString;
+	}
+
+	string domainToXMLNative(string nativeFormat, string domainXML, uint flags)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to run toXMLNative on null connection");
+		auto result = virConnectDomainXMLToNative(this.handle,nativeFormat.toStringz, domainXML.toStringz,flags);
+		enforce(result !is null,"unable to run domainToXMLNative");
+		return result.fromCString;
+	}
+	
+	auto createDomainXML(string xmlDescription, virDomainCreateFlags flags)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null,"trying to run createXML on null connection");
+		auto result = virDomainCreateXML(this.handle,xmlDescription.toStringz,flags);
+		enforce(result !is null, "unable to createXML domain");
+		return VirtDomain(result);
+	}
+
+	auto defineDomainXML(string xmlDescription)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null,"trying to run defineXML on null connection");
+		auto result = virDomainDefineXML(this.handle,xmlDescription.toStringz);
+		enforce(result !is null, "unable to defineXML domain");
+		return VirtDomain(result);
+	}
+
+}
+
+struct VirtNetwork
+{
+	virNetworkPtr handle;
+	alias handle this;
+	
+	this(virNetworkPtr handle)
+	{
+		this.handle= handle;
+		auto result = virNetworkRef(handle);
+		enforce(result==0,"unable to increase reference count when creating VirtNetwork");
+	}
+	this(ref virConnectPtr conn, string name)
+	{
+		if(name.length==0 || name[$-1]!='\0')
+			name~='\0';
+		this.handle = virNetworkLookupByName(conn,name.ptr);
+		enforce(handle !is null, "unable to create VirtNetwork from name "~name);
+		auto result = virNetworkRef(this.handle);
+		enforce(result==0,"unable to increase reference count when creating VirtNetwork");
+	}
+
+	~this()
+	{
+		if (handle !is null)
+		{
+			auto result = virNetworkFree(handle);
+			enforce(result==0,"unable to decrease reference count when destroying VirtNetwork");
+			handle = null;
+		}
+	}
+	this(this)
+	{
+		auto result = virNetworkRef(handle);
+		enforce(result==0,"unable to increase reference count when creating VirtNetwork");
+	}
+
+	string getBridgeName()
+	{
+		auto result  = virNetworkGetBridgeName(handle);
+		enforce(result !is null, "unable to get bridge name");
+		auto ret = result.fromStringz.idup;
+		free(result);
+		return ret;
+	}
+
+	void destroy()
+	{
+		enforce(handle !is null, "trying to destroy null network");
+		auto result = virNetworkDestroy(handle);
+		enforce(result ==0, "error destroying network");
+	}
+
+
+	alias createNetworkXML = createNetworkHelper!virNetworkCreateXML;
+	alias defineNetworkXML = createNetworkHelper!virNetworkDefineXML;
+
+	static virNetworkPtr createNetworkHelper(alias f)(ref virConnectPtr conn, string xmlDesc)
+	{
+		import std.range:take;
+		if(xmlDesc.length ==0 || xmlDesc[$-1]!='\0')
+			xmlDesc~='\0';
+		auto result = f(conn,xmlDesc.ptr);
+		enforce(result !is null, format!"error defining or creating network from: %s"(xmlDesc));
+		return result;
+	}
+
+	void create()
+	{
+		enforce(handle !is null, "trying to create null network");
+		auto result = virNetworkCreate(handle);
+		enforce(result ==0 , "error creating network");
+	}
+
+	string getName()
+	{
+		enforce(handle !is null, "trying to get name for null network");
+		auto result = virNetworkGetName(handle);
+		auto ret = (result is null)? null : result.fromStringz.idup;
+		return ret;
+	}
+
+	string getUUID()
+	{
+		char[VIR_UUID_BUFLEN] s;
+		enforce(handle !is null, "trying to get UUID for null network");
+		auto result = virNetworkGetUUID(handle,cast(ubyte*)s.ptr);
+		enforce(result ==0, "failed to get UUID for network");
+		return s.ptr.fromStringz.idup;
+	}
+
+	string getUUIDString()
+	{
+		char[VIR_UUID_STRING_BUFLEN] s;
+		enforce(handle !is null, "trying to get UUID string for null network");
+		auto result = virNetworkGetUUIDString(handle,s.ptr);
+		enforce(result ==0, "failed to get UUID string for network");
+		return s.ptr.fromStringz.idup;
+	}
+
+	string getXML(virNetworkXMLFlags flags)
+	{
+		auto s = virNetworkGetXMLDesc(handle,flags);
+		enforce(s !is null, "failed to get XML description for network");
+		return s.fromStringz.idup;
+	}
+	bool isActive()
+	{
+		enforce(handle !is null, "trying to get isActive for null network");
+		auto result = virNetworkIsActive(handle);
+		enforce(result !=-1, "error getting isActive for network");
+		return (result==1);
+	}
+	bool isPersistent()
+	{
+		enforce(handle !is null, "trying to get isPersistent for null network");
+		auto result = virNetworkIsPersistent(handle);
+		enforce(result!=-1, "error getting isPersistent for network");
+		return (result==1);
+	}
+	bool getAutostart()
+	{
+		int ret;
+		enforce(handle !is null, "trying to get isPersistent for null network");
+		auto result = virNetworkGetAutostart(handle,&ret);
+		enforce(result!=-1, "error getting isPersistent for network");
+		return (ret==1);
+	}
+
+	void setAutostart(bool autostart=true)
+	{
+		enforce(handle !is null, "trying to set autostart for null network");
+		auto result = virNetworkSetAutostart(handle, autostart?1:0);
+		enforce(result!=-1, "error setting autostart for network");
+	}
+	void undefine()
+	{
+		enforce(handle !is null, "trying to undefine null network");
+		auto result = virNetworkUndefine(handle);
+		enforce(result!=-1, "error undefining network");
+	}
+	void updateDefinition(virNetworkUpdateCommand command, virNetworkUpdateSection section, int parentIndex, string xmlString, virNetworkUpdateFlags flags)
+	{
+		if(xmlString.length==0 || xmlString[$-1]!='\0')
+			xmlString~='\0';
+		auto result = virNetworkUpdate(handle,command,section,parentIndex,xmlString.ptr,flags);
+		enforce(result!=-1,"error updating network definition");
+	}
+	string toString()
+	{
+		import std.array:Appender;
+		Appender!string ret;
+		if (handle is null)
+		{
+			ret.put("Null network\n");
+			return ret.data;
+		}
+		ret.put(format!"VirtNetwork(name=%s,UUID=%s,isActive=%s,isPersistent=%s,getAutostart=%s\n"
+				(this.getName(),this.getUUIDString(),this.isActive(),this.isPersistent,this.getAutostart()));
+		ret.put(getXML(cast(_Anonymous_1)0));
+		ret.put("\n");
+		return ret.data;
+	}
+	auto getDHCPLeases(string mac, int flags =0)
+	{
+		import std.algorithm:map;
+		import std.array:array,Appender;
+		Appender!(VirDHCPLease[]) ret;
+		virNetworkDHCPLeasePtr** leases;
+		if(mac.length==0)
+			mac = null;
+		else
+			mac = (mac[$-1]=='\0')?mac:mac~'\0';
+		auto result = virNetworkGetDHCPLeases(handle,mac.ptr,leases,flags);
+		enforce (result!=-1,"error getting DHCP leases for network");
+		foreach(i;0..result)
+			ret.put(VirDHCPLease((*leases)[i]));
+		return ret.data;
+	}
+}
+
+enum MaxActiveNetworks = 1024;
+alias getActiveNetworks = getNetworks!(virConnectListNetworks);
+alias getDefinedNetworks = getNetworks!(virConnectListDefinedNetworks);
+string[] getNetworks(alias f)(ref virConnectPtr conn)
+{
+	string[] ret;
+	char*[MaxActiveNetworks] names;
+	auto result = f(conn,names.ptr,MaxActiveNetworks);
+	enforce(result>=0,"error calling getNetworks");
+	ret.length = result;
+	foreach(i;0..result)
+	{
+		ret~=names[i].fromStringz.idup;
+		free(names[i]);
+	}
+	return ret;
+}
+
+
+
+string[] getUpInterfaces(ref virConnectPtr conn)
+{
+    import std.algorithm;
+    import std.string;
+    import std.conv:to;
+    import std.array:array;
+    char*[] ifaceNames;
+    string[] ret;
+    ifaceNames.length = virConnectNumOfInterfaces(conn);
+    if(ifaceNames.length>0)
+    {
+        auto result = virConnectListInterfaces(conn, ifaceNames.ptr, ifaceNames.length.to!int);
+        ifaceNames.length = (result < 0) ? 0 :result;
+        ret = ifaceNames.map!(ifaceName=>ifaceName.fromStringz.idup).array;
+        ifaceNames.each!(ifaceName => free(ifaceName));
+    }
+    return ret;
+}
+
+string[] getDefinedInterfaces(ref virConnectPtr conn)
+{
+    import std.algorithm;
+    import std.string;
+    import std.conv:to;
+    import std.array:array;
+    char*[] ifaceNames;
+    string[] ret;
+    ifaceNames.length = virConnectNumOfDefinedInterfaces(conn);
+    if(ifaceNames.length>0)
+    {
+        auto result = virConnectListDefinedInterfaces(conn, &ifaceNames[0], ifaceNames.length.to!int);
+        ifaceNames.length = (result < 0) ? 0 :result;
+        ret = ifaceNames.map!(ifaceName=>ifaceName.fromStringz.idup).array;
+        ifaceNames.each!(ifaceName => free(ifaceName));
+    }
+    return ret;
+}
+
+struct VirDHCPLease
+{
+	import std.datetime:SysTime;
+	virNetworkDHCPLeasePtr handle;
+	string iface()
+	{
+		enforce(handle !is null,"getting interface on null DHCP Lease");
+		return  (handle.iface is null) ? null : handle.iface.fromStringz.idup;
+	}
+
+	SysTime expiryTime()
+	{
+		import std.datetime:SysTime,unixTimeToStdTime;
+		enforce(handle !is null,"getting expiryTime on null DHCP Lease");
+		return  SysTime(handle.expirytime.unixTimeToStdTime);
+	}
+
+	string type()
+	{
+		enforce(handle !is null,"getting type on null DHCP Lease");
+		return format!"type: %s"(handle.type);
+	}
+
+	string mac()
+	{
+		enforce(handle !is null,"getting mac on null DHCP Lease");
+		return  (handle.mac is null) ? null : handle.mac.fromStringz.idup;
+	}
+	
+	string iaid()
+	{
+		enforce(handle !is null,"getting iaid on null DHCP Lease");
+		return  (handle.iaid is null) ? null : handle.iaid .fromStringz.idup;
+	}
+
+	string ip()
+	{
+		enforce(handle !is null,"getting ip addr on null DHCP Lease");
+		return  (handle.ipaddr is null) ? null : handle.ipaddr.fromStringz.idup;
+	}
+	uint prefix()
+	{
+		enforce(handle !is null,"getting ip prefix on null DHCP Lease");
+		return handle.prefix;
+	}
+	string hostname()
+	{
+		enforce(handle !is null,"getting hostname on null DHCP Lease");
+		return  (handle.hostname is null) ? null : handle.hostname.fromStringz.idup;
+	}
+	string clientID()
+	{
+		enforce(handle !is null,"getting clientID on null DHCP Lease");
+		return  (handle.clientid is null) ? null : handle.clientid.fromStringz.idup;
+	}
+}
+
+enum VirtStatus
+{
+	success = 0,
+	failure = -1,
+}
+
+struct VirtDomain
+{
+	virDomainPtr handle;
+	alias handle this;
+
+	this(virDomainPtr handle)
+	{
+		this.handle= handle;
+		auto result = virDomainRef(handle);
+		enforce(result==0,"unable to increase reference count when creating VirtDomain");
+	}
+
+	~this()
+	{
+		if(this.handle !is null)
+		{
+			auto result = virDomainFree(this.handle);
+			enforce(result==0,"unable to decrease reference count when destroying VirtDomain");
+			this.handle = null;
+		}
+	}
+
+	this(this)
+	{
+		if(this.handle !is null)
+		{
+			auto result = virDomainRef(handle);
+			enforce(result==0,"unable to increase reference count during VirtDomain postblit");
+		}
+	}
+
+	void attachDevice(string xmlString)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to run attachDevice on null domain");
+		auto result = virDomainAttachDevice(this.handle,xmlString.toStringz);
+		enforce(result ==0 ,"unable to attachDevice to domain");
+	}
+	
+	void coreDump(string pathString, virDomainCoreDumpFlags flags)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null,"trying to dump core on null domain");
+		auto result = virDomainCoreDump(this.handle,pathString.toStringz,flags);
+		enforce(result==0,"unable to dump core on domain");
+	}
+
+	void coreDumpWithFormat(string pathString, virDomainCoreDumpFormat dumpFormat, virDomainCoreDumpFlags flags)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to dump core with format on null domain");
+		auto result = virDomainCoreDumpWithFormat(this.handle,pathString.toStringz,dumpFormat,flags);
+		enforce(result==0,"unable to dump core with format on domain");
+	}
+
+	void create()
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to run create on null domain");
+		auto result = virDomainCreate(this.handle);
+		enforce(result==0,"unable to create domain");
+	}
+
+
+			
+	void rename(string newName, uint flags=0)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to rename null domain");
+		auto result = virDomainRename(this.handle,newName.toStringz,flags);
+		enforce(result==0,"unable to rename domain to "~newName);
+	}
+
+	T reset(T=void)(uint flags=0)
+	if (is(T==void) || is(T==VirtStatus))
+	{
+		enforce(this.handle !is null, "trying to reset domain");
+		auto result = virDomainReset(this.handle,flags);
+		static if (is(T==void))
+			enforce(result==0,"unable to reset domain");
+		else
+			return(result==0?VirtStatus.success:VirtStatus.failure);
+	}
+
+	T resume(T=void)()
+	if (is(T==void) || is(T==VirtStatus))
+	{
+		enforce(this.handle !is null, "trying to resume null domain");
+		auto result = virDomainResume(this.handle);
+		static if (is(T==void))
+			enforce(result==0,"unable to resume domain");
+		else
+			return (result==0) ? VirtStatus.success : VirtStatus.failure;
+	}
+
+	T suspend(T=void)()
+	if (is(T==void) || is(T==VirtStatus))
+	{
+		enforce(this.handle !is null, "trying to suspend null domain");
+		auto result = virDomainSuspend(this.handle);
+		static if (is(T==void))
+			enforce(result==0,"unable to suspend domain");
+		else
+			return (result==0) ? VirtStatus.success : VirtStatus.failure;
+	}
+
+	T undefine(T=void)()
+	if (is(T==void) || is(T==VirtStatus))
+	{
+		enforce(this.handle !is null, "trying to undefine null domain");
+		auto result = virDomainUndefine(this.handle);
+		static if (is(T==void))
+			enforce(result==0,"unable to undefine domain");
+		else
+			return (result==0) ? VirtStatus.success : VirtStatus.failure;
+	}
+
+	T save(T=void)(string path)
+	if (is(T==void) || is(T==VirtStatus))
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to save null domain");
+		auto result = virDomainSave(this.handle,path.toStringz);
+		static if (is(T==void))
+			enforce(result==0,"unable to save domain to path " ~ path);
+		else
+			return (result==0) ? VirtStatus.success : VirtStatus.failure;
+	}
+
+	T shutdown(T=void)()
+	if (is(T==void) || is(T==VirtStatus))
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to resume null domain");
+		auto result = virDomainShutdown(this.handle,path.toStringz);
+		static if(is(T==void))
+			enforce(result==0,"unable to shutdown dowmain");
+		else
+			return (result==0) ? VirtStatus.success : VirtStatus.failure;
+	}
+		
+	void setUserPassword(string user, string password, virDomainSetUserPasswordFlags flags)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to set user password on null domain");
+		auto result = virDomainSetUserPassword(this.handle,user.toStringz,password.toStringz,flags);
+		enforce(result==0,"unable to setUserPassword for user "~user);
+	}
+
+	void setVCPU(string vcpuMap, bool enableState, virDomainModificationImpact flags)
+	{
+		import std.string:toStringz;
+		enforce(this.handle !is null, "trying to set vcpu on null domain");
+		auto result = virDomainSetVcpu(this.handle,vcpuMap.toStringz,enableState?1:0,flags);
+		enforce(result==0,"unable to setVCPU");
+	}
+
+	ulong getMaxMemory()
+	{
+		enforce(this.handle !is null, "trying to getMaxMemomry on null domain");
+		auto result = virDomainGetMaxMemory(this.handle);
+		enforce(result!=0,"unable to getMaxMemory");
+		return result;
+	}
+}
+
+
+
