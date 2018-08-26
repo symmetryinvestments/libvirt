@@ -875,4 +875,33 @@ struct VirtDomain
 }
 
 
+enum VirtDomainDiskErrorType
+{
+	none = virDomainDiskErrorCode.VIR_DOMAIN_DISK_ERROR_NONE,
+	unspecified = virDomainDiskErrorCode.VIR_DOMAIN_DISK_ERROR_UNSPEC,
+	noSpace = virDomainDiskErrorCode.VIR_DOMAIN_DISK_ERROR_NO_SPACE,
+	last = cast(virDomainDiskErrorCode)3, // FIXME virDomainDiskErrorCode.VIR_DOMAIN_DISK_ERROR_LAST,
+}
 
+struct VirtDomainDiskError
+{
+	virDomainDiskErrorPtr handle;
+	string disk()
+	{
+		import std.string:fromStringz;
+		enforce(handle !is null, "trying to get disk on null disk error");
+		return handle.disk.fromStringz.idup;
+	}
+
+	VirtDomainDiskErrorType error()
+	{
+		enforce(handle !is null, "trying to get error on null disk error");
+		return (cast(VirtDomainDiskErrorType)(handle.error));
+	}
+
+	string errorString()
+	{
+		import std.conv:to;
+		return this.error.to!string;
+	}
+}
